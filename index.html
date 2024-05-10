@@ -1,0 +1,56 @@
+<!doctype html>
+
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>WebGPU Life</title>
+    </head>
+    <body>
+        <canvas width="512" height="512"></canvas> 
+        <script type="module"> //Module type allows to use top-level awaits
+            const canvas = document.querySelector("canvas");
+            //WebGPU Code
+
+            if(!navigator.gpu){
+                throw new Error("WebGPU not supported on this browers.");
+            }
+
+            //Get Adapter -> Look at the GPU infos
+            const adapter = await navigator.gpu.requestAdapter();
+            if(!adapter){
+                throw new Error("No appropriate GPU hardware found.");
+            }
+
+            //GPU device => Logical interface to interact with the GPU
+            const device = await adapter.requestDevice();
+
+            //Configure Canvas to use device created so it can show something
+            const context = canvas.getContext("webgpu");
+            const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+            context.configure({
+                device: device,
+                format: canvasFormat,
+            });
+
+            //Once the canvas has been configured, clear the canvas with a solid colour
+            //Create GPUCommandEncoder which provides an interface for recording GPU commands
+            const encoder = device.createCommandEncoder();
+
+            //Create a renderPass
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view: context.getCurrentTexture().createView(),
+                    loadOp: "clear",
+                    clearValue: { r: 0.1, g: 0.3, b: 0.4, a: 0.4 },
+                    storeOp: "store",
+                }],
+            });
+            pass.end();
+            
+            //To create a command buffer for the gpu to execute, need to call finish on the encoder
+            const commandBuffer = encoder.finish();
+            device.queue.submit([commandBuffer]);
+
+        </script>
+    </body>
+</html>
