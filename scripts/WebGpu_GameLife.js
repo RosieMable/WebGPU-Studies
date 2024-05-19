@@ -3,7 +3,7 @@ import code from '../shaders/GameLifeShader.wgsl.js'
 //Module type allows to use top-level awaits    
 const canvas = document.querySelector("canvas");
 
-const GRID_SIZE = 4;
+const GRID_SIZE = 64;
 
 //WebGPU Code ----
 if (!navigator.gpu) {
@@ -124,7 +124,7 @@ const pass = encoder.beginRenderPass({
 pass.setPipeline(cellGPURenderPipeline);
 pass.setVertexBuffer(0, vertexBuffer); //0 because it is the 0th element of the GPURenderPipeline in vertex.buffers
 pass.setBindGroup(0, bindGroup);
-pass.draw(vertices.length / 2);
+pass.draw(vertices.length / 2,  GRID_SIZE * GRID_SIZE);
 pass.end();
 
 //To create a command buffer for the gpu to execute, need to call finish on the encoder
