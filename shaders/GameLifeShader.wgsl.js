@@ -18,6 +18,7 @@ struct FragOutput{
 
 //Defines uniform that is 2D float vector that matches the uniformArray 
 @group(0) @binding(0) var<uniform> grid: vec2f;
+@group(0) @binding(1) var<storage> cellState: array<u32>;
 
 //@builtin(position) attribute to indicate we are returning the final position of the vertex being processed in clipspace
 //@location(0) attribute to indicate the data to use from the buffer created (0 because of what is in vertexBufferLayout)
@@ -30,9 +31,11 @@ VertexOutput {
     let i = f32(input.instance); //Casting type to floats because pos uses floating numbers
     //Compute the cell coordinate from the instance_index by usingthe modulo op and for each Y value / by grid width => floor() function
     let cell = vec2f(i % grid.x, floor(i / grid.x));
+    let state = f32(cellState[input.instance]);
     let cellOffset = cell / grid * 2; //2 is used to go from coordinate -1 to +1
     //Subtract 1 after dividing by grid size because canvas' coordinate system has BOTTOM LEFT == (-1, -1) and CENTER == (0, 0)
-    let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
+   
+    let gridPos = (input.pos * state + 1) / grid - 1 + cellOffset;
 
     var output : VertexOutput;
     output.pos = vec4f(gridPos, 0, 1);
