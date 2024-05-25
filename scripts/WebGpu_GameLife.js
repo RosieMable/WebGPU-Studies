@@ -60,6 +60,35 @@ const uniformBuffer = device.createBuffer({
 
 device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
+//Array to store cell state data
+const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+
+//Storage buffers instead of uniform buffers since storage buffs can be read and written to compute shaders and red in vertex shaders
+//Storage buffer to hold the cell state
+const cellStateStorage = [device.createBuffer({
+    label: "Cell State A",
+    size: cellStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+}),
+device.createBuffer({
+    label: "Cell State B",
+    size: cellStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+})
+];
+
+//Mark every third cell of the grid as active
+for(let i = 0; i < cellStateArray.length; i+= 3){
+    cellStateArray[i] = 1;
+}
+device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
+
+// Mark every other cell of the second grid as active.
+for (let i = 0; i < cellStateArray.length; i++) {
+    cellStateArray[i] = i % 2;
+  }
+  device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
+
 //Define vertex layout
 const vertexBufferLayout = {
     arrayStride: 8, //Number of bytes the GPU needs to skip forward in the buffer, when looking for next vertex
@@ -97,14 +126,31 @@ const cellGPURenderPipeline = device.createRenderPipeline({
 
 //To connect the uniform created in the shader and the buffer created above, there is the need to create a bind group and set it
 //A bind group is a collection of resources that you want to make accessible to both the program and shader at the same type
-const bindGroup = device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
-    label: "Cell Renderer Bind Group",
+const bindGroup = [device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
+    label: "Cell Renderer Bind Group A",
     layout: cellGPURenderPipeline.getBindGroupLayout(0), //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
     entries: [{
         binding: 0, //Corresponds to @binding()
-        resource: {buffer: uniformBuffer} //resource that is exposed to the variable at the specified binding index
+        resource: {buffer: uniformBuffer}
+    },
+    { //resource that is exposed to the variable at the specified binding index
+        binding: 1,
+        resource: {buffer: cellStateStorage[0]}
     }],
-});
+}),
+device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
+    label: "Cell Renderer Bind Group B",
+    layout: cellGPURenderPipeline.getBindGroupLayout(0), //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
+    entries: [{
+        binding: 0, //Corresponds to @binding()
+        resource: {buffer: uniformBuffer}
+    },
+    { //resource that is exposed to the variable at the specified binding index
+        binding: 1,
+        resource: {buffer: cellStateStorage[1]}
+    }],
+}),
+];
 
 
 //Once the canvas has been configured, clear the canvas with a solid colour
