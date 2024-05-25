@@ -1,9 +1,12 @@
-import code from '../shaders/GameLifeShader.wgsl.js'
+import vertFrag from '../shaders/GameLifeShader.wgsl.js'
+import compute from '../shaders/GLCompute.wgsl.js'
 
 //Module type allows to use top-level awaits    
 const canvas = document.querySelector("canvas");
 
 const GRID_SIZE = 64;
+const UPDATE_INTERVAL = 200; //update every 200ms
+const WORKGROUP_SIZE = 8;
 
 //WebGPU Code ----
 if (!navigator.gpu) {
@@ -78,10 +81,10 @@ device.createBuffer({
 ];
 
 //Mark every third cell of the grid as active
-for(let i = 0; i < cellStateArray.length; i+= 3){
-    cellStateArray[i] = 1;
+for(let i = 0; i < cellStateArray.length; ++i){
+    cellStateArray[i] = Math.random() > 0.6 ? 1 :0;
 }
-device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
+device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
 
 // Mark every other cell of the second grid as active.
 for (let i = 0; i < cellStateArray.length; i++) {
@@ -102,14 +105,85 @@ const vertexBufferLayout = {
 //Create shader -> Use createShaderModule, which will return GPUShaderModule object with the compiled shader
 const cellShaderModule = device.createShaderModule({
     label: "Cell shader",
-    code
+    code: vertFrag
+});
+
+//Create Compute shader that will process the simulation
+const cellSimulationComputeShaderModule = device.createShaderModule({
+    label: "Compute Simulation Game of Life",
+    code: compute
+});
+
+//Create bind group layout and pipeline layout
+const bindGroupLayout = device.createBindGroupLayout({
+    label: "Cell Bind Group Layout",
+    entries: [
+        {
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX  | GPUShaderStage.FRAGMENT| GPUShaderStage.COMPUTE,
+            buffer: {} //Grid Uniform buffer
+        }, 
+        {
+            binding: 1,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+            buffer: {type: "read-only-storage"} //CellStateIn -> input buffer
+        }, 
+        {
+            binding: 2,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: {type: "storage"} 
+        }
+]
+});
+
+//To connect the uniform created in the shader and the buffer created above, there is the need to create a bind group and set it
+//A bind group is a collection of resources that you want to make accessible to both the program and shader at the same type
+const bindGroups = [device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
+    label: "Cell Renderer Bind Group A",
+    layout: bindGroupLayout, //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
+    entries: [{
+        binding: 0, //Corresponds to @binding()
+        resource: {buffer: uniformBuffer}
+    },
+    { //resource that is exposed to the variable at the specified binding index
+        binding: 1,
+        resource: {buffer: cellStateStorage[0]}
+    },
+    {
+        binding: 2,
+        resource: {buffer: cellStateStorage[1]}
+    }
+],
+}),
+device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
+    label: "Cell Renderer Bind Group B",
+    layout: bindGroupLayout, //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
+    entries: [{
+        binding: 0, //Corresponds to @binding()
+        resource: {buffer: uniformBuffer}
+    },
+    { //resource that is exposed to the variable at the specified binding index
+        binding: 1,
+        resource: {buffer: cellStateStorage[1]}
+    },
+    {
+        binding: 2,
+        resource: {buffer: cellStateStorage[0]}
+    }
+],
 })
+];
+
+//Create Render Pipeline Layout
+const renderPipelineLayout = device.createPipelineLayout({
+    label: "Cell Pipeline Layout",
+    bindGroupLayouts: [bindGroupLayout],
+});
 
 //Create GPURenderPipeline
-
 const cellGPURenderPipeline = device.createRenderPipeline({
     label: "Cell GPU Render Pipeline",      //Label: Name for debuggine purposes
-    layout: "auto",                         //Layout: Describes what types of inputes (other than vertex buffers) the pipeline needs
+    layout: renderPipelineLayout,                         //Layout: Describes what types of inputes (other than vertex buffers) the pipeline needs
     vertex: {                               //Vertex: Vertex Stage definition
         module: cellShaderModule,           //Module: Points to a GPUShaderModule object that contains the desired vertex shader
         entryPoint: "vertexMain",           //EntryPoint: Name of the funtion in the shader code that will be called for every vertex
@@ -124,38 +198,35 @@ const cellGPURenderPipeline = device.createRenderPipeline({
     }
 });
 
-//To connect the uniform created in the shader and the buffer created above, there is the need to create a bind group and set it
-//A bind group is a collection of resources that you want to make accessible to both the program and shader at the same type
-const bindGroup = [device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
-    label: "Cell Renderer Bind Group A",
-    layout: cellGPURenderPipeline.getBindGroupLayout(0), //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
-    entries: [{
-        binding: 0, //Corresponds to @binding()
-        resource: {buffer: uniformBuffer}
-    },
-    { //resource that is exposed to the variable at the specified binding index
-        binding: 1,
-        resource: {buffer: cellStateStorage[0]}
-    }],
-}),
-device.createBindGroup({ //Returns GPUBindGroup, opaque and immutable handle
-    label: "Cell Renderer Bind Group B",
-    layout: cellGPURenderPipeline.getBindGroupLayout(0), //Can used layout of the pipeline because it has the attribute "auto", which creates automatically bind groups layouts, it is 0 because in shader is @group(0)
-    entries: [{
-        binding: 0, //Corresponds to @binding()
-        resource: {buffer: uniformBuffer}
-    },
-    { //resource that is exposed to the variable at the specified binding index
-        binding: 1,
-        resource: {buffer: cellStateStorage[1]}
-    }],
-}),
-];
+//Create compute pipeline to update game state
+const computeSimulationPipeline = device.createComputePipeline({
+    label: "Compute Simulation Pipeline",
+    layout: renderPipelineLayout,
+    compute: {
+        module: cellSimulationComputeShaderModule,
+        entryPoint: "computeMain",
+    }
+});
 
+let step = 0; //simulation tracker
 
-//Once the canvas has been configured, clear the canvas with a solid colour
+function UpdateGrid(){
+
 //Create GPUCommandEncoder which provides an interface for recording GPU commands
 const encoder = device.createCommandEncoder();
+
+const computePass= encoder.beginComputePass();
+
+computePass.setPipeline(computeSimulationPipeline);
+computePass.setBindGroup(0, bindGroups[step % 2]);
+
+const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
+computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
+
+computePass.end();
+
+//step count between the passes, so that the output buffer of the compute pipeline becomes the input buffer for the render pipeline
+step++;
 
 //Create a renderPass
 const pass = encoder.beginRenderPass({
@@ -169,11 +240,15 @@ const pass = encoder.beginRenderPass({
 
 pass.setPipeline(cellGPURenderPipeline);
 pass.setVertexBuffer(0, vertexBuffer); //0 because it is the 0th element of the GPURenderPipeline in vertex.buffers
-pass.setBindGroup(0, bindGroup);
+pass.setBindGroup(0, bindGroups[step % 2]);
 pass.draw(vertices.length / 2,  GRID_SIZE * GRID_SIZE);
 pass.end();
 
 //To create a command buffer for the gpu to execute, need to call finish on the encoder
 const commandBuffer = encoder.finish();
 device.queue.submit([commandBuffer]);
+
+}
+
+setInterval(UpdateGrid, UPDATE_INTERVAL);
 
